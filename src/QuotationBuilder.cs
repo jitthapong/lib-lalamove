@@ -36,31 +36,22 @@ namespace Lalamove
 
         public QuotationBuilder SetDeliveryInfo(DeliveryDetail sender, DeliveryDetail[] recipients)
         {
-            var wayPointbuilder = new WaypointBuilder()
-               .AddWaypoint(sender.Lat, sender.Lng, sender.AddressDetail);
+            var wayPointbuilder = new StopPointBuilder()
+               .AddStopPoint(sender.Lat, sender.Lng, sender.AddressDetail);
 
             var deliveryBuilder = new DeliveryInfoBuilder();
 
             for (var i = 0; i < recipients.Count(); i++)
             {
                 var recipient = recipients[i];
-                wayPointbuilder.AddWaypoint(recipient.Lat, recipient.Lng, recipient.AddressDetail);
+                wayPointbuilder.AddStopPoint(recipient.Lat, recipient.Lng, recipient.AddressDetail);
 
                 deliveryBuilder.AddDeliveryInfo(i + 1, new Contact() { Name = recipient.ContactName, Phone = recipient.PhoneNumber });
             }
 
-            var stops = wayPointbuilder.Waypoints;
+            var stops = wayPointbuilder.StopPoints;
             _quotation.Stops ??= new List<object>();
             _quotation.Stops.AddRange(stops);
-
-            _quotation.Deliveries = deliveryBuilder.Deliveries;
-
-            _quotation.RequesterContact = new Contact()
-            {
-                Name = sender.ContactName,
-                Phone = sender.PhoneNumber
-            };
-
             return this;
         }
 
@@ -73,16 +64,6 @@ namespace Lalamove
         {
             _quotation.SpecialRequests = new List<string>();
             _quotation.SpecialRequests.AddRange(requests);
-            return this;
-        }
-
-        public QuotationBuilder SetQuotedTotalFee(QuotationResult result)
-        {
-            _quotation.QuotedTotalFee = new Pricing()
-            {
-                Amount = result.TotalFee,
-                Currency = result.TotalFeeCurrency
-            };
             return this;
         }
 

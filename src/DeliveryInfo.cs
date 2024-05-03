@@ -13,6 +13,9 @@ namespace Lalamove
             ContactName = contactName;
             PhoneNumber = phoneNumber;
             AddressDetail = addressDetail;
+
+            if (!PhoneNumber.StartsWith("+66"))
+                PhoneNumber = $"+66{PhoneNumber}";
         }
 
         public string Lat { get; set; }

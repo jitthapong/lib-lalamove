@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -27,40 +28,24 @@ namespace Lalamove
 
         public async Task<QuotationResult> GetQuotationAsync(Quotation quotation)
         {
-            var path = "/v2/quotations";
+            var path = "/v3/quotations";
             var uri = new UriBuilder($"{_config.BaseUrl}{path}");
-
+            var body = new
+            {
+                data = quotation
+            };
             var httpClient = GetHttpClient();
-            SetRequestHeader(quotation, path, "POST", httpClient);
+            SetRequestHeader(body, path, "POST", httpClient);
 
-            var content = CreateStringContent(quotation);
+            var content = CreateStringContent(body);
             var response = await httpClient.PostAsync(uri.ToString(), content);
             var result = await GetResponse<QuotationResult>(response);
-            quotation.QuotedTotalFee = new Pricing()
-            {
-                Amount = result.TotalFee,
-                Currency = result.TotalFeeCurrency
-            };
             return result;
         }
 
-        public async Task<OrderResult> PlaceOrderAsync(Quotation quotation)
+        public async Task<OrderResult> GetOrderStatusAsync(string orderId)
         {
-            var path = "/v2/orders";
-            var uri = new UriBuilder($"{_config.BaseUrl}{path}");
-
-            var httpClient = GetHttpClient();
-            SetRequestHeader(quotation, path, "POST", httpClient);
-
-            var content = CreateStringContent(quotation);
-            var response = await httpClient.PostAsync(uri.ToString(), content);
-            var result = await GetResponse<OrderResult>(response);
-            return result;
-        }
-
-        public async Task<OrderStatusResult> GetOrderStatusAsync(string orderId)
-        {
-            var path = $"/v2/orders/{orderId}";
+            var path = $"/v3/orders/{orderId}";
             var uri = new UriBuilder($"{_config.BaseUrl}{path}");
 
             var httpClient = GetHttpClient();
@@ -68,25 +53,25 @@ namespace Lalamove
             SetRequestHeader(emptyBody, path, "GET", httpClient);
 
             var response = await httpClient.GetAsync(uri.ToString());
-            var result = await GetResponse<OrderStatusResult>(response);
+            var result = await GetResponse<OrderResult>(response);
             return result;
         }
 
         public async Task CancleOrderAsync(string orderId)
         {
-            var path = $"/v2/orders/{orderId}/cancel";
+            var path = $"/v3/orders/{orderId}";
             var uri = new UriBuilder($"{_config.BaseUrl}{path}");
 
             var httpClient = GetHttpClient();
             object emptyBody = null;
-            SetRequestHeader(emptyBody, path, "PUT", httpClient);
+            SetRequestHeader(emptyBody, path, "DELETE", httpClient);
 
-            await httpClient.PutAsync(uri.ToString(), null);
+            await httpClient.DeleteAsync(uri.ToString());
         }
 
         public async Task<DriverDetail> GetDriverDetailAsync(string orderId, string driverId)
         {
-            var path = $"/v2/orders/{orderId}/drivers/{driverId}";
+            var path = $"/v3/orders/{orderId}/drivers/{driverId}";
             var uri = new UriBuilder($"{_config.BaseUrl}{path}");
 
             var httpClient = GetHttpClient();
@@ -98,18 +83,53 @@ namespace Lalamove
             return result;
         }
 
-        public async Task<DeliverLocation> GetDriverLocationAsync(string orderId, string driverId)
+        public async Task<DriverDetail> PlaceOrderWithDriverDetailAsync(OrderRequest order, int timeoutSeconds = 60)
         {
-            var path = $"/v2/orders/{orderId}/drivers/{driverId}/location";
+            var path = "/v3/orders";
             var uri = new UriBuilder($"{_config.BaseUrl}{path}");
-
+            var body = new
+            {
+                data = order
+            };
             var httpClient = GetHttpClient();
-            object emptyBody = null;
-            SetRequestHeader(emptyBody, path, "GET", httpClient);
+            SetRequestHeader(body, path, "POST", httpClient);
 
-            var response = await httpClient.GetAsync(uri.ToString());
-            var result = await GetResponse<DeliverLocation>(response);
-            return result;
+            var content = CreateStringContent(body);
+            var response = await httpClient.PostAsync(uri.ToString(), content);
+            var orderResult = await GetResponse<OrderResult>(response);
+
+            DateTime timeToStop = DateTime.Now;
+            timeToStop = timeToStop.AddSeconds(timeoutSeconds);
+
+            DriverDetail driverDetail = new DriverDetail
+            {
+                OrderId = orderResult.OrderId
+            };
+            while (true)
+            {
+                var timeout = timeToStop.Subtract(DateTime.Now);
+                if ((int)timeout.TotalSeconds <= 0)
+                {
+                    break;
+                }
+
+                orderResult = await GetOrderStatusAsync(orderResult.OrderId);
+                if (!orderResult.Status.Equals("ASSIGNING_DRIVER"))
+                {
+                    if (orderResult.Status.Equals("ON_GOING"))
+                    {
+                        driverDetail = await GetDriverDetailAsync(orderResult.OrderId, orderResult.DriverId);
+                        driverDetail.Status = orderResult.Status;
+                        driverDetail.OrderId = orderResult.OrderId;
+                    }
+                    break;
+                }
+                else
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                }
+            }
+            return driverDetail;
         }
 
         private void SetRequestHeader<T>(T payload, string path, string method, HttpClient httpClient)
@@ -119,7 +139,7 @@ namespace Lalamove
                 body = JsonConvert.SerializeObject(payload, _serializerSettings);
             var authorize = CreateAuthorizeHeader(path, method, body);
             httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authorize);
-            httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-LLM-Country", _config.CountryCode);
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Market", _config.CountryCode);
             httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Request-ID", Guid.NewGuid().ToString());
         }
 
@@ -141,8 +161,9 @@ namespace Lalamove
         {
             await HandleResponse(response);
             var result = await response.Content.ReadAsStringAsync();
+            var jObj = JObject.Parse(result);
             return await Task.Run(() =>
-                JsonConvert.DeserializeObject<T>(result, _serializerSettings));
+                JsonConvert.DeserializeObject<T>(jObj["data"]?.ToString(), _serializerSettings));
         }
 
         StringContent CreateStringContent<T>(T data)
@@ -178,100 +199,6 @@ namespace Lalamove
                 }
                 throw new HttpRequestExceptionEx(response.StatusCode, content);
             }
-        }
-
-        public async Task<OrderStatusResult> PlaceOrderWithStatusAsync(Quotation quotation, int timeoutSeconds)
-        {
-            var path = "/v2/orders";
-            var uri = new UriBuilder($"{_config.BaseUrl}{path}");
-
-            var httpClient = GetHttpClient();
-            SetRequestHeader(quotation, path, "POST", httpClient);
-
-            var content = CreateStringContent(quotation);
-            var response = await httpClient.PostAsync(uri.ToString(), content);
-            var orderResult = await GetResponse<OrderResult>(response);
-
-            DateTime timeToStop = DateTime.Now;
-            timeToStop = timeToStop.AddSeconds(timeoutSeconds);
-
-            OrderStatusResult statusResult = new OrderStatusResult()
-            {
-                CustomerOrderId = orderResult.CustomerOrderId,
-                OrderRef = orderResult.OrderRef
-            };
-
-            while (true)
-            {
-                var timeout = timeToStop.Subtract(DateTime.Now);
-                if ((int)timeout.TotalSeconds <= 0)
-                {
-                    break;
-                }
-
-                statusResult = await GetOrderStatusAsync(orderResult.OrderRef);
-                if (!statusResult.Status.Equals("ASSIGNING_DRIVER"))
-                {
-                    break;
-                }
-                else
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(1));
-                }
-            }
-            return statusResult;
-        }
-
-        public async Task<OrderDriverDetail> PlaceOrderWithDriverDetailAsync(Quotation quotation, int timeoutSeconds = 60)
-        {
-            var path = "/v2/orders";
-            var uri = new UriBuilder($"{_config.BaseUrl}{path}");
-
-            var httpClient = GetHttpClient();
-            SetRequestHeader(quotation, path, "POST", httpClient);
-
-            var content = CreateStringContent(quotation);
-            var response = await httpClient.PostAsync(uri.ToString(), content);
-            var orderResult = await GetResponse<OrderResult>(response);
-
-            DateTime timeToStop = DateTime.Now;
-            timeToStop = timeToStop.AddSeconds(timeoutSeconds);
-
-            OrderDriverDetail orderDriverDetail = new OrderDriverDetail()
-            {
-                OrderRef = orderResult.OrderRef,
-                CustomerOrderId = orderResult.CustomerOrderId
-            };
-            while (true)
-            {
-                var timeout = timeToStop.Subtract(DateTime.Now);
-                if ((int)timeout.TotalSeconds <= 0)
-                {
-                    break;
-                }
-
-                var orderStatus = await GetOrderStatusAsync(orderResult.OrderRef);
-                orderDriverDetail.Status = orderStatus.Status;
-                orderDriverDetail.DriverId = orderStatus.DriverId;
-
-                if (!orderStatus.Status.Equals("ASSIGNING_DRIVER"))
-                {
-                    if (orderStatus.Status.Equals("ON_GOING"))
-                    {
-                        var driverDetail = await GetDriverDetailAsync(orderResult.OrderRef, orderStatus.DriverId);
-                        orderDriverDetail.Name = driverDetail.Name;
-                        orderDriverDetail.PlateNumber = driverDetail.PlateNumber;
-                        orderDriverDetail.Phone = driverDetail.Phone;
-                        orderDriverDetail.Photo = driverDetail.Photo;
-                    }
-                    break;
-                }
-                else
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(1));
-                }
-            }
-            return orderDriverDetail;
         }
     }
 }

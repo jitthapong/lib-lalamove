@@ -8,7 +8,7 @@ namespace Lalamove
     public class DeliverLocation
     {
         [JsonProperty("location")]
-        public Location Location { get; set; }
+        public Coordinate Location { get; set; }
         [JsonProperty("updateAt")]
         public DateTimeOffset UpdateAt { get; set; }
     }

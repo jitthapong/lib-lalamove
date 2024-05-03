@@ -16,20 +16,23 @@ namespace Lalamove
         [JsonProperty("stops")]
         public List<object> Stops { get; set; }
 
-        [JsonProperty("deliveries")]
-        public List<DeliveryInfo> Deliveries { get; set; }
-
-        [JsonProperty("requesterContact")]
-        public Contact RequesterContact { get; set; }
-
         [JsonProperty("specialRequests")]
         public List<string> SpecialRequests { get; set; }
 
-        [JsonProperty("quotedTotalFee")]
-        public Pricing QuotedTotalFee { get; set; }
+        [JsonProperty("item")]
+        public Item Item { get; set; }
+        [JsonProperty("language")]
+        public string Language { get; set; } = "th_TH";
+        [JsonProperty("isRouteOptimized")]
+        public bool IsRouteOptimized { get; set; } = true;
+    }
 
-        [JsonProperty("sms")]
-        public bool SendSms { get; set; }
+    public class Item
+    {
+        public string quantity { get; set; } = "1";
+        public string weight { get; set; } = "LESS_THAN_3KG";
+        public string[] categories { get; set; } = new string[] { "FOOD_DELIVERY" };
+        public string[] handlingInstructions { get; set; } = new string[] { "KEEP_UPRIGHT" };
     }
 
     public class DeliveryInfo
@@ -53,7 +56,7 @@ namespace Lalamove
         public string Phone { get; set; }
     }
 
-    public class Location
+    public class Coordinate
     {
         [JsonProperty("lat")]
         public string Lat { get; set; }
